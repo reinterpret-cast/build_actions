@@ -8,17 +8,14 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Checkout repo
-        uses: actions/checkout@v4
-
       - name: Setup Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
 
-      - name: Clone kohya_ss
+      - name: Clone kohya_ss with submodules
         run: |
-          git clone https://github.com/bmaltais/kohya_ss.git
+          git clone --recursive https://github.com/bmaltais/kohya_ss.git
         shell: powershell
 
       - name: Create venv
@@ -35,7 +32,7 @@ jobs:
           pip install -r requirements.txt
         shell: powershell
 
-      - name: Collect bundle
+      - name: Archive bundle
         run: |
           Compress-Archive -Path kohya_ss -DestinationPath kohya_ss_windows_bundle.zip
         shell: powershell
