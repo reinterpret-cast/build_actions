@@ -1,4 +1,4 @@
-name: Build Kohya SS Windows Bundle
+name: Build Kohya CUDA126 Bundle
 
 on:
   workflow_dispatch:
@@ -8,7 +8,8 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Setup Python 3.10
+
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -24,21 +25,35 @@ jobs:
           python -m venv venv
         shell: powershell
 
-      - name: Install dependencies
+      - name: Install PyTorch CUDA 12.6
         run: |
           cd kohya_ss
           .\venv\Scripts\activate
           python -m pip install --upgrade pip
+          pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+        shell: powershell
+
+      - name: Install kohya requirements
+        run: |
+          cd kohya_ss
+          .\venv\Scripts\activate
           pip install -r requirements.txt
         shell: powershell
 
-      - name: Archive bundle
+      - name: Install xformers
         run: |
-          Compress-Archive -Path kohya_ss -DestinationPath kohya_ss_windows_bundle.zip
+          cd kohya_ss
+          .\venv\Scripts\activate
+          pip install xformers
+        shell: powershell
+
+      - name: Create archive
+        run: |
+          Compress-Archive -Path kohya_ss -DestinationPath kohya_ss_cuda126_portable.zip
         shell: powershell
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kohya_ss_windows_bundle
-          path: kohya_ss_windows_bundle.zip
+          name: kohya_ss_cuda126
+          path: kohya_ss_cuda126_portable.zip
