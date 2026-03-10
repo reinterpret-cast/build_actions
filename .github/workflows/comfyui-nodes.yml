@@ -8,19 +8,16 @@ jobs:
     runs-on: windows-latest
 
     steps:
-
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python (ComfyUI portable compatible)
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.13"
 
       - name: Upgrade pip
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip
+        run: python -m pip install --upgrade pip
 
       - name: Prepare directories
         shell: pwsh
@@ -32,37 +29,26 @@ jobs:
         shell: pwsh
         run: |
           cd build/custom_nodes
-
           git clone https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git
           git clone https://github.com/city96/ComfyUI-GGUF.git
           git clone https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git
           git clone https://github.com/flybirdxx/ComfyUI-Qwen-TTS.git
 
-      - name: Install requirements from all nodes
+      - name: Install node requirements
         shell: pwsh
         run: |
-          Get-ChildItem build/custom_nodes -Recurse -Filter requirements.txt | ForEach-Object {
-            Write-Host "Installing requirements from $($_.FullName)"
-            pip install -r $_.FullName
+          $reqs = Get-ChildItem -Path build/custom_nodes -Recurse -Filter requirements.txt
+          foreach ($r in $reqs) {
+            Write-Host "Installing $($r.FullName)"
+            pip install -r $r.FullName
           }
 
-      - name: Collect python site-packages
+      - name: Copy site-packages
         shell: pwsh
         run: |
-          $script = @"
-import sysconfig, shutil, os
-
-site_packages = sysconfig.get_paths()["purelib"]
-target = "build/python_site_packages"
-
-os.makedirs(target, exist_ok=True)
-shutil.copytree(site_packages, target, dirs_exist_ok=True)
-
-print("Copied site-packages from:", site_packages)
-"@
-
-          Set-Content collect_site_packages.py $script
-          python collect_site_packages.py
+          $site = python -c "import sysconfig; print(sysconfig.get_paths()['purelib'])"
+          New-Item -ItemType Directory -Force -Path build/python_site_packages
+          Copy-Item "$site\*" build/python_site_packages -Recurse -Force
 
       - name: Create custom_nodes zip
         shell: pwsh
