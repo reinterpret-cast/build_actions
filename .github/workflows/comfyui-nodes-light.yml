@@ -33,6 +33,11 @@ jobs:
           git clone https://github.com/city96/ComfyUI-GGUF.git
           git clone https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git
           git clone https://github.com/flybirdxx/ComfyUI-Qwen-TTS.git
+          git clone https://github.com/rgthree/rgthree-comfy.git
+          git clone https://github.com/welltop-cn/ComfyUI-TeaCache.git
+          git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git
+          git clone https://github.com/pollockjj/ComfyUI-MultiGPU.git
+          git clone https://github.com/nunchaku-ai/ComfyUI-nunchaku.git
 
       - name: Merge requirements
         shell: pwsh
