@@ -45,18 +45,19 @@ jobs:
           pip install -r $_.FullName
         }
 
-    - name: Collect site-packages
-      shell: pwsh
-      run: |
-        @"
-    import site, shutil, os
-    site_packages = site.getsitepackages()[0]
-    target = "build/python_site_packages"
-    os.makedirs(target, exist_ok=True)
-    shutil.copytree(site_packages, target, dirs_exist_ok=True)
-    "@ | Set-Content collect.py
+- name: Collect site-packages
+  shell: pwsh
+  run: |
+    $script = @"
+import site, shutil, os
+site_packages = site.getsitepackages()[0]
+target = "build/python_site_packages"
+os.makedirs(target, exist_ok=True)
+shutil.copytree(site_packages, target, dirs_exist_ok=True)
+"@
 
-    python collect.py
+    Set-Content -Path collect_site_packages.py -Value $script
+    python collect_site_packages.py
 
     - name: Create custom_nodes zip
       shell: pwsh
