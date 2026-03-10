@@ -1,0 +1,75 @@
+name: Build ComfyUI Custom Nodes Bundle
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+
+    - name: Checkout repo
+      uses: actions/checkout@v4
+
+    - name: Setup Python (ComfyUI portable compatible)
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.13"
+
+    - name: Prepare folders
+      shell: pwsh
+      run: |
+        mkdir build
+        mkdir build/custom_nodes
+
+    - name: Clone custom node repos
+      shell: pwsh
+      run: |
+        cd build/custom_nodes
+
+        git clone https://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler.git
+        git clone https://github.com/city96/ComfyUI-GGUF.git
+        git clone https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git
+        git clone https://github.com/flybirdxx/ComfyUI-Qwen-TTS.git
+
+    - name: Install requirements
+      shell: pwsh
+      run: |
+        python -m pip install --upgrade pip
+
+        Get-ChildItem build/custom_nodes -Recurse -Filter requirements.txt | ForEach-Object {
+          echo "Installing $($_.FullName)"
+          pip install -r $_.FullName
+        }
+
+    - name: Collect site-packages
+      shell: pwsh
+      run: |
+        python - <<EOF
+import site, shutil, os
+site_packages = site.getsitepackages()[0]
+target = "build/python_site_packages"
+os.makedirs(target, exist_ok=True)
+shutil.copytree(site_packages, target, dirs_exist_ok=True)
+EOF
+
+    - name: Create custom_nodes zip
+      shell: pwsh
+      run: |
+        Compress-Archive -Path build/custom_nodes/* -DestinationPath custom_nodes_bundle.zip
+
+    - name: Create python libs zip
+      shell: pwsh
+      run: |
+        Compress-Archive -Path build/python_site_packages/* -DestinationPath python_site_packages.zip
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: comfyui-bundles
+        path: |
+          custom_nodes_bundle.zip
+          python_site_packages.zip
