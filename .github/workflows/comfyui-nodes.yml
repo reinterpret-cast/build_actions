@@ -48,13 +48,15 @@ jobs:
     - name: Collect site-packages
       shell: pwsh
       run: |
-        python - <<EOF
-import site, shutil, os
-site_packages = site.getsitepackages()[0]
-target = "build/python_site_packages"
-os.makedirs(target, exist_ok=True)
-shutil.copytree(site_packages, target, dirs_exist_ok=True)
-EOF
+        @"
+    import site, shutil, os
+    site_packages = site.getsitepackages()[0]
+    target = "build/python_site_packages"
+    os.makedirs(target, exist_ok=True)
+    shutil.copytree(site_packages, target, dirs_exist_ok=True)
+    "@ | Set-Content collect.py
+
+    python collect.py
 
     - name: Create custom_nodes zip
       shell: pwsh
