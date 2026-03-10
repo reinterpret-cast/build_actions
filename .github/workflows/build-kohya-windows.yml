@@ -1,4 +1,4 @@
-name: Build Kohya CUDA126 Bundle
+name: Build sd-scripts CUDA126 bundle
 
 on:
   workflow_dispatch:
@@ -14,46 +14,47 @@ jobs:
         with:
           python-version: "3.10"
 
-      - name: Clone kohya_ss with submodules
+      - name: Clone sd-scripts
         run: |
-          git clone --recursive https://github.com/bmaltais/kohya_ss.git
+          git clone https://github.com/kohya-ss/sd-scripts.git
         shell: powershell
 
-      - name: Create venv
+      - name: Create virtual environment
         run: |
-          cd kohya_ss
+          cd sd-scripts
           python -m venv venv
         shell: powershell
 
       - name: Install PyTorch CUDA 12.6
         run: |
-          cd kohya_ss
+          cd sd-scripts
           .\venv\Scripts\activate
           python -m pip install --upgrade pip
-          pip install torch==2.7.0 torchvision==0.22.0 torchaudio==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu126
         shell: powershell
 
-      - name: Install kohya requirements
+      - name: Install dependencies
         run: |
-          cd kohya_ss
+          cd sd-scripts
           .\venv\Scripts\activate
           pip install -r requirements.txt
         shell: powershell
 
       - name: Install xformers
         run: |
-          cd kohya_ss
+          cd sd-scripts
           .\venv\Scripts\activate
-          pip install xformers
+          pip install xformers --extra-index-url https://download.pytorch.org/whl/cu126
         shell: powershell
 
       - name: Create archive
         run: |
-          Compress-Archive -Path kohya_ss -DestinationPath kohya_ss_cuda126_portable.zip
+          Compress-Archive -Path sd-scripts -DestinationPath sd_scripts_cuda126.zip
         shell: powershell
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: kohya_ss_cuda126
-          path: kohya_ss_cuda126_portable.zip
+          name: sd_scripts_cuda126
+          path: sd_scripts_cuda126.zip
