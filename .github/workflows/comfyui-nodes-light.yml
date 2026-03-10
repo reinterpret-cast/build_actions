@@ -1,4 +1,4 @@
-name: Build ComfyUI Nodes Bundle
+name: Build ComfyUI Nodes Light Bundle
 
 on:
   workflow_dispatch:
