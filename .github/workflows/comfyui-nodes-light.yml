@@ -38,6 +38,7 @@ jobs:
           git clone https://github.com/ltdrdata/ComfyUI-Impact-Pack.git
           git clone https://github.com/pollockjj/ComfyUI-MultiGPU.git
           git clone https://github.com/nunchaku-ai/ComfyUI-nunchaku.git
+          git clone https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor.git
 
       - name: Merge requirements
         shell: pwsh
