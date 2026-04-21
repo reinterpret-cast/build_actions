@@ -40,6 +40,7 @@ jobs:
           git clone https://github.com/nunchaku-ai/ComfyUI-nunchaku.git
           git clone https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor.git
           git clone https://github.com/1038lab/ComfyUI-JoyCaption.git
+          git clone https://github.com/xb1n0ry/ComfyUI-KleinRefGrid
 
       - name: Merge requirements
         shell: pwsh
