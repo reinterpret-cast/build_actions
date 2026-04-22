@@ -41,7 +41,8 @@ jobs:
           git clone https://github.com/westNeighbor/ComfyUI-ultimate-openpose-editor.git
           git clone https://github.com/1038lab/ComfyUI-JoyCaption.git
           git clone https://github.com/xb1n0ry/ComfyUI-KleinRefGrid
-
+          git clone https://github.com/capitan01R/ComfyUI-Flux2Klein-Enhancer
+          
       - name: Merge requirements
         shell: pwsh
         run: |
