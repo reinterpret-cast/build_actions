@@ -1,0 +1,215 @@
+      - name: Install CUDA-enabled PyTorch
+        shell: pwsh
+        env:
+          PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
+          TORCH_VERSION: "2.9.1"
+          TORCHVISION_VERSION: "0.24.1"
+          TORCHAUDIO_VERSION: "2.9.1"
+          EXPECTED_CUDA_VERSION: "12.8"
+          EXPECTED_CUDA_TAG: "cu128"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
+          # Eventuell vorhandene CPU- oder inkompatible Wheels entfernen.
+          & $python -m pip uninstall `
+            --yes `
+            torch `
+            torchvision `
+            torchaudio
+
+          # Ausschließlich den offiziellen CUDA-12.8-PyTorch-Index verwenden.
+          & $python -m pip install `
+            --no-cache-dir `
+            --index-url "$env:PYTORCH_INDEX_URL" `
+            "torch==$env:TORCH_VERSION" `
+            "torchvision==$env:TORCHVISION_VERSION" `
+            "torchaudio==$env:TORCHAUDIO_VERSION"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installation der CUDA-Version von PyTorch ist fehlgeschlagen."
+          }
+
+      - name: Verify CUDA PyTorch packages
+        shell: pwsh
+        env:
+          EXPECTED_CUDA_VERSION: "12.8"
+          EXPECTED_CUDA_TAG: "cu128"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
+          & $python -c @"
+          import sys
+          import torch
+          import torchvision
+          import torchaudio
+
+          expected_cuda = "$env:EXPECTED_CUDA_VERSION"
+          expected_tag = "$env:EXPECTED_CUDA_TAG"
+
+          packages = {
+              "torch": torch.__version__,
+              "torchvision": torchvision.__version__,
+              "torchaudio": torchaudio.__version__,
+          }
+
+          print("Python:", sys.version)
+          print("PyTorch packages:", packages)
+          print("PyTorch CUDA runtime:", torch.version.cuda)
+
+          errors = []
+
+          if torch.version.cuda is None:
+              errors.append(
+                  "PyTorch ist eine CPU-Version: torch.version.cuda ist None."
+              )
+
+          if torch.version.cuda != expected_cuda:
+              errors.append(
+                  f"CUDA-Version ist {torch.version.cuda!r}, "
+                  f"erwartet wurde {expected_cuda!r}."
+              )
+
+          for package, version in packages.items():
+              if f"+{expected_tag}" not in version:
+                  errors.append(
+                      f"{package} {version!r} besitzt nicht den "
+                      f"erwarteten CUDA-Tag +{expected_tag}."
+                  )
+
+          if errors:
+              print("\nCUDA-Prüfung fehlgeschlagen:", file=sys.stderr)
+              for error in errors:
+                  print(f" - {error}", file=sys.stderr)
+              raise SystemExit(1)
+
+          print("CUDA-PyTorch-Prüfung erfolgreich.")
+          "@
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Es wurden keine gültigen CUDA-12.8-PyTorch-Wheels installiert."
+          }
+
+      - name: Install AI Toolkit dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
+          & $python -m pip install `
+            --no-cache-dir `
+            poetry-core `
+            wheel
+
+          & $python -m pip install `
+            --no-cache-dir `
+            -r "ai-toolkit\requirements.txt"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installation der AI-Toolkit-Abhängigkeiten ist fehlgeschlagen."
+          }
+
+          & $python -m pip install `
+            --no-cache-dir `
+            "triton-windows<3.6"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Installation von triton-windows ist fehlgeschlagen."
+          }
+
+      - name: Restore and lock CUDA PyTorch packages
+        shell: pwsh
+        env:
+          PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
+          TORCH_VERSION: "2.9.1"
+          TORCHVISION_VERSION: "0.24.1"
+          TORCHAUDIO_VERSION: "2.9.1"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
+          # requirements.txt könnte theoretisch andere Torch-Wheels installieren.
+          # Deshalb werden am Ende nochmals ausdrücklich die CUDA-Wheels gesetzt.
+          & $python -m pip install `
+            --no-cache-dir `
+            --force-reinstall `
+            --no-deps `
+            --index-url "$env:PYTORCH_INDEX_URL" `
+            "torch==$env:TORCH_VERSION" `
+            "torchvision==$env:TORCHVISION_VERSION" `
+            "torchaudio==$env:TORCHAUDIO_VERSION"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Wiederherstellung der CUDA-PyTorch-Wheels ist fehlgeschlagen."
+          }
+
+      - name: Final CUDA package verification
+        shell: pwsh
+        env:
+          EXPECTED_CUDA_VERSION: "12.8"
+          EXPECTED_CUDA_TAG: "cu128"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
+          & $python -c @"
+          import sys
+          import importlib.metadata
+          import torch
+          import torchvision
+          import torchaudio
+
+          expected_cuda = "$env:EXPECTED_CUDA_VERSION"
+          expected_tag = "$env:EXPECTED_CUDA_TAG"
+
+          versions = {
+              "torch": torch.__version__,
+              "torchvision": torchvision.__version__,
+              "torchaudio": torchaudio.__version__,
+          }
+
+          print("Installed package versions:")
+          for package, version in versions.items():
+              print(f"  {package}: {version}")
+
+          print("Compiled CUDA runtime:", torch.version.cuda)
+          print("CUDA device available on build runner:", torch.cuda.is_available())
+
+          errors = []
+
+          if torch.version.cuda != expected_cuda:
+              errors.append(
+                  f"torch.version.cuda={torch.version.cuda!r}; "
+                  f"erwartet={expected_cuda!r}"
+              )
+
+          for package, version in versions.items():
+              if f"+{expected_tag}" not in version:
+                  errors.append(
+                      f"{package} ist kein +{expected_tag}-Build: {version}"
+                  )
+
+          if errors:
+              print("\nUngültige PyTorch-Installation:", file=sys.stderr)
+              for error in errors:
+                  print(f" - {error}", file=sys.stderr)
+              raise SystemExit(1)
+
+          print("\nCUDA-PyTorch ist korrekt installiert.")
+          "@
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Finale CUDA-Prüfung fehlgeschlagen."
+          }
+
+          & $python -m pip check
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pip check meldet inkompatible Abhängigkeiten."
+          }
