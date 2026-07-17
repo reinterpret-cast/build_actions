@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       ai_toolkit_ref:
-        description: Branch, Tag oder Commit von ostris/ai-toolkit
+        description: "Branch, Tag oder Commit von ostris/ai-toolkit"
         required: true
-        default: main
+        default: "main"
         type: string
 
 permissions:
@@ -14,13 +14,15 @@ permissions:
 
 jobs:
   build:
-    name: Build Windows CUDA package
+    name: Build Windows CUDA package with UI
     runs-on: windows-latest
-    timeout-minutes: 180
+    timeout-minutes: 240
 
     env:
+      PACKAGE_NAME: "ai-toolkit-windows-python310-cu128"
       PYTHON_VERSION: "3.10.11"
-      PACKAGE_NAME: "ai-toolkit-windows-python310"
+      NODE_VERSION: "22.14.0"
+
       PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
       TORCH_VERSION: "2.9.1"
       TORCHVISION_VERSION: "0.24.1"
@@ -43,8 +45,13 @@ jobs:
             ai-toolkit
 
           Set-Location ai-toolkit
+
           git submodule update --init --recursive
-          git rev-parse HEAD | Out-File -Encoding ascii AI_TOOLKIT_COMMIT.txt
+
+          git rev-parse HEAD |
+            Out-File `
+              -FilePath AI_TOOLKIT_COMMIT.txt `
+              -Encoding ascii
 
       - name: Create package directories
         shell: pwsh
@@ -55,9 +62,15 @@ jobs:
             -ItemType Directory `
             -Force `
             -Path "$env:PACKAGE_NAME\python" |
-          Out-Null
+            Out-Null
 
-      - name: Download embedded Python
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "$env:PACKAGE_NAME\node" |
+            Out-Null
+
+      - name: Download embedded Python 3.10
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -65,7 +78,11 @@ jobs:
           $archive = "python-$env:PYTHON_VERSION-embed-amd64.zip"
           $url = "https://www.python.org/ftp/python/$env:PYTHON_VERSION/$archive"
 
-          Invoke-WebRequest -Uri $url -OutFile $archive
+          Write-Host "Downloading Python from $url"
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $archive
 
           Expand-Archive `
             -Path $archive `
@@ -74,17 +91,17 @@ jobs:
 
           Remove-Item $archive -Force
 
-      - name: Enable Python site-packages
+      - name: Enable Python site packages
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $pthFile = Get-ChildItem `
             "$env:PACKAGE_NAME\python\python*._pth" |
-          Select-Object -First 1
+            Select-Object -First 1
 
           if (-not $pthFile) {
-            throw "Die Python ._pth-Datei wurde nicht gefunden."
+            throw "Python ._pth file was not found."
           }
 
           $content = Get-Content $pthFile.FullName
@@ -117,7 +134,7 @@ jobs:
           & $python get-pip.py --no-warn-script-location
 
           if ($LASTEXITCODE -ne 0) {
-            throw "pip konnte nicht installiert werden."
+            throw "pip installation failed."
           }
 
           Remove-Item get-pip.py -Force
@@ -129,7 +146,7 @@ jobs:
             wheel
 
           if ($LASTEXITCODE -ne 0) {
-            throw "pip, setuptools oder wheel konnten nicht aktualisiert werden."
+            throw "pip upgrade failed."
           }
 
       - name: Install CUDA PyTorch
@@ -147,10 +164,10 @@ jobs:
             "torchaudio==$env:TORCHAUDIO_VERSION"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "CUDA-PyTorch konnte nicht installiert werden."
+            throw "CUDA PyTorch installation failed."
           }
 
-      - name: Install AI Toolkit dependencies
+      - name: Install AI Toolkit Python dependencies
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -162,7 +179,7 @@ jobs:
             -r "ai-toolkit\requirements.txt"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Die AI-Toolkit-Abhängigkeiten konnten nicht installiert werden."
+            throw "AI Toolkit Python dependency installation failed."
           }
 
           & $python -m pip install `
@@ -171,10 +188,10 @@ jobs:
             "triton-windows<3.6"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Die zusätzlichen Windows-Abhängigkeiten konnten nicht installiert werden."
+            throw "Additional Windows dependency installation failed."
           }
 
-      - name: Restore CUDA PyTorch versions
+      - name: Restore exact CUDA PyTorch packages
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -191,17 +208,17 @@ jobs:
             "torchaudio==$env:TORCHAUDIO_VERSION"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Die CUDA-PyTorch-Versionen konnten nicht wiederhergestellt werden."
+            throw "Restoring CUDA PyTorch packages failed."
           }
 
-      - name: Verify CUDA packages
+      - name: Verify CUDA PyTorch
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $python = "$env:PACKAGE_NAME\python\python.exe"
 
-          & $python -c @"
+          @'
           import sys
           import torch
           import torchvision
@@ -216,20 +233,20 @@ jobs:
           print("Python:", sys.version)
           print("CUDA runtime:", torch.version.cuda)
 
-          for name, version in versions.items():
-              print(f"{name}: {version}")
+          for package, version in versions.items():
+              print(f"{package}: {version}")
 
           errors = []
 
           if torch.version.cuda != "12.8":
               errors.append(
-                  f"Falsche CUDA-Runtime: {torch.version.cuda!r}; erwartet: '12.8'"
+                  f"Expected CUDA 12.8, got {torch.version.cuda!r}"
               )
 
-          for name, version in versions.items():
+          for package, version in versions.items():
               if "+cu128" not in version:
                   errors.append(
-                      f"{name} ist kein CUDA-12.8-Paket: {version}"
+                      f"{package} is not a cu128 package: {version}"
                   )
 
           if errors:
@@ -238,20 +255,168 @@ jobs:
 
               raise SystemExit(1)
 
-          print("CUDA-12.8-PyTorch wurde erfolgreich geprüft.")
-          "@
+          print("CUDA PyTorch verification successful.")
+          '@ | Set-Content `
+            -Path verify_cuda.py `
+            -Encoding utf8
+
+          & $python verify_cuda.py
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Die CUDA-Paketprüfung ist fehlgeschlagen."
+            throw "CUDA PyTorch verification failed."
           }
+
+          Remove-Item verify_cuda.py -Force
 
           & $python -m pip check
 
           if ($LASTEXITCODE -ne 0) {
-            throw "pip check hat inkompatible Abhängigkeiten gefunden."
+            throw "pip check found incompatible Python dependencies."
           }
 
-      - name: Copy AI Toolkit
+      - name: Download portable Node.js
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $archive = "node-v$env:NODE_VERSION-win-x64.zip"
+          $url = "https://nodejs.org/dist/v$env:NODE_VERSION/$archive"
+          $temporaryDirectory = "node-extracted"
+          $sourceDirectory = Join-Path `
+            $temporaryDirectory `
+            "node-v$env:NODE_VERSION-win-x64"
+
+          Write-Host "Downloading Node.js from $url"
+
+          Invoke-WebRequest `
+            -Uri $url `
+            -OutFile $archive
+
+          Expand-Archive `
+            -Path $archive `
+            -DestinationPath $temporaryDirectory `
+            -Force
+
+          if (-not (Test-Path "$sourceDirectory\node.exe")) {
+            throw "Portable node.exe was not found."
+          }
+
+          Copy-Item `
+            -Path "$sourceDirectory\*" `
+            -Destination "$env:PACKAGE_NAME\node" `
+            -Recurse `
+            -Force
+
+          Remove-Item $archive -Force
+          Remove-Item $temporaryDirectory -Recurse -Force
+
+          & "$env:PACKAGE_NAME\node\node.exe" --version
+          & "$env:PACKAGE_NAME\node\npm.cmd" --version
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Portable Node.js verification failed."
+          }
+
+      - name: Install UI dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $nodeDirectory = Resolve-Path "$env:PACKAGE_NAME\node"
+          $npm = Join-Path $nodeDirectory "npm.cmd"
+          $uiDirectory = Resolve-Path "ai-toolkit\ui"
+
+          $env:PATH = "$nodeDirectory;$env:PATH"
+          $env:NODE_ENV = "development"
+
+          Set-Location $uiDirectory
+
+          Write-Host "Node.js version:"
+          & node.exe --version
+
+          Write-Host "npm version:"
+          & $npm --version
+
+          if (Test-Path "package-lock.json") {
+            & $npm ci `
+              --include=dev `
+              --no-audit `
+              --no-fund
+          }
+          else {
+            & $npm install `
+              --include=dev `
+              --no-audit `
+              --no-fund
+          }
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "UI dependency installation failed."
+          }
+
+      - name: Initialize Prisma
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $nodeDirectory = Resolve-Path "$env:PACKAGE_NAME\node"
+          $npm = Join-Path $nodeDirectory "npm.cmd"
+          $uiDirectory = Resolve-Path "ai-toolkit\ui"
+
+          $env:PATH = "$nodeDirectory;$env:PATH"
+          $env:NODE_ENV = "development"
+
+          Set-Location $uiDirectory
+
+          & $npm run update_db
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Prisma database initialization failed."
+          }
+
+      - name: Verify UI dependencies
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $nodeDirectory = Resolve-Path "$env:PACKAGE_NAME\node"
+          $node = Join-Path $nodeDirectory "node.exe"
+          $uiDirectory = Resolve-Path "ai-toolkit\ui"
+
+          $env:PATH = "$nodeDirectory;$env:PATH"
+
+          Set-Location $uiDirectory
+
+          @'
+          const requiredModules = [
+            "next/package.json",
+            "react/package.json",
+            "typescript/package.json",
+            "concurrently/package.json",
+            "ts-node-dev/package.json",
+            "prisma/package.json",
+            "@prisma/client/package.json"
+          ];
+
+          for (const moduleName of requiredModules) {
+            const location = require.resolve(moduleName);
+            console.log(`${moduleName}: ${location}`);
+          }
+
+          console.log("UI dependencies verified.");
+          '@ | Set-Content `
+            -Path verify-ui.cjs `
+            -Encoding utf8
+
+          & $node verify-ui.cjs
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "UI dependency verification failed."
+          }
+
+          Remove-Item verify-ui.cjs -Force
+
+      - name: Copy AI Toolkit into package
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -268,7 +433,7 @@ jobs:
             -Force `
             -ErrorAction SilentlyContinue
 
-      - name: Create launcher scripts
+      - name: Create Windows launchers
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -276,15 +441,102 @@ jobs:
           @'
           @echo off
           setlocal
-          cd /d "%~dp0ai-toolkit"
 
-          if "%~1"=="" (
-              echo Verwendung:
-              echo run-training.bat pfad\zur\config.yml
+          set "ROOT=%~dp0"
+          set "PYTHON_DIR=%ROOT%python"
+          set "NODE_DIR=%ROOT%node"
+
+          set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%NODE_DIR%;%PATH%"
+          set "NODE_ENV=development"
+
+          cd /d "%ROOT%ai-toolkit\ui"
+
+          echo ============================================
+          echo AI Toolkit UI
+          echo ============================================
+          echo.
+          echo Node.js:
+          node.exe --version
+          echo.
+          echo npm:
+          call npm.cmd --version
+          echo.
+          echo Python:
+          "%PYTHON_DIR%\python.exe" --version
+          echo.
+          echo Starting UI at:
+          echo http://localhost:3000
+          echo.
+          echo Keep this window open.
+          echo Press Ctrl+C to stop the UI.
+          echo.
+
+          call npm.cmd run dev
+
+          set "EXIT_CODE=%ERRORLEVEL%"
+
+          echo.
+          if not "%EXIT_CODE%"=="0" (
+              echo UI exited with error code %EXIT_CODE%.
+              pause
+          )
+
+          exit /b %EXIT_CODE%
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\start-ui.bat" `
+            -Encoding ascii
+
+          @'
+          @echo off
+          setlocal
+
+          set "ROOT=%~dp0"
+          set "PYTHON_DIR=%ROOT%python"
+          set "NODE_DIR=%ROOT%node"
+
+          set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%NODE_DIR%;%PATH%"
+          set "NODE_ENV=development"
+
+          cd /d "%ROOT%ai-toolkit\ui"
+
+          echo Updating Prisma database...
+          call npm.cmd run update_db
+
+          if errorlevel 1 (
+              echo Prisma update failed.
+              pause
               exit /b 1
           )
 
-          "..\python\python.exe" run.py %*
+          echo.
+          echo Starting UI at:
+          echo http://localhost:3000
+          echo.
+
+          call npm.cmd run dev
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\update-database-and-start-ui.bat" `
+            -Encoding ascii
+
+          @'
+          @echo off
+          setlocal
+
+          set "ROOT=%~dp0"
+          set "PYTHON_DIR=%ROOT%python"
+          set "NODE_DIR=%ROOT%node"
+
+          set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%NODE_DIR%;%PATH%"
+
+          cd /d "%ROOT%ai-toolkit"
+
+          if "%~1"=="" (
+              echo Usage:
+              echo run-training.bat path\to\config.yml
+              exit /b 1
+          )
+
+          "%PYTHON_DIR%\python.exe" run.py %*
           '@ | Set-Content `
             -Path "$env:PACKAGE_NAME\run-training.bat" `
             -Encoding ascii
@@ -292,10 +544,36 @@ jobs:
           @'
           @echo off
           setlocal
-          cd /d "%~dp0ai-toolkit"
 
-          "..\python\python.exe" -c "import torch; print('PyTorch:', torch.__version__); print('CUDA runtime:', torch.version.cuda); print('GPU verfuegbar:', torch.cuda.is_available())"
+          set "ROOT=%~dp0"
+          set "PYTHON_DIR=%ROOT%python"
+          set "NODE_DIR=%ROOT%node"
 
+          set "PATH=%PYTHON_DIR%;%PYTHON_DIR%\Scripts;%NODE_DIR%;%PATH%"
+
+          echo Python:
+          "%PYTHON_DIR%\python.exe" --version
+
+          echo.
+          echo PyTorch:
+          "%PYTHON_DIR%\python.exe" -c "import torch; print('Version:', torch.__version__); print('CUDA runtime:', torch.version.cuda); print('GPU available:', torch.cuda.is_available())"
+
+          echo.
+          echo Node.js:
+          node.exe --version
+
+          echo.
+          echo npm:
+          call npm.cmd --version
+
+          echo.
+          if exist "%ROOT%ai-toolkit\ui\node_modules" (
+              echo UI dependencies: installed
+          ) else (
+              echo UI dependencies: MISSING
+          )
+
+          echo.
           pause
           '@ | Set-Content `
             -Path "$env:PACKAGE_NAME\check-installation.bat" `
@@ -304,53 +582,94 @@ jobs:
           @'
           @echo off
           setlocal
-          "%~dp0python\python.exe" %*
+
+          set "ROOT=%~dp0"
+          set "PATH=%ROOT%python;%ROOT%python\Scripts;%PATH%"
+
+          "%ROOT%python\python.exe" %*
           '@ | Set-Content `
             -Path "$env:PACKAGE_NAME\python.bat" `
             -Encoding ascii
 
-      - name: Create README
+          @'
+          @echo off
+          setlocal
+
+          set "ROOT=%~dp0"
+          set "PATH=%ROOT%node;%PATH%"
+
+          "%ROOT%node\node.exe" %*
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\node.bat" `
+            -Encoding ascii
+
+      - name: Create package README
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           @'
-          # AI Toolkit für Windows
+          # AI Toolkit for Windows
 
-          Dieses Paket enthält:
+          This package contains:
 
-          - AI Toolkit von ostris
-          - Embedded Python 3.10
-          - CUDA-fähiges PyTorch für CUDA 12.8
-          - TorchVision und TorchAudio für CUDA 12.8
-          - Python-Abhängigkeiten des AI Toolkits
-          - triton-windows
+          - AI Toolkit
+          - Python 3.10
+          - CUDA 12.8 PyTorch
+          - TorchVision and TorchAudio CUDA packages
+          - Python dependencies
+          - Portable Node.js and npm
+          - UI node_modules, including development dependencies
+          - Prisma client and database initialization
+          - Windows launcher scripts
 
-          ## Voraussetzungen
+          ## Requirements
 
-          - Windows 10 oder Windows 11, 64 Bit
-          - Kompatible NVIDIA-GPU
-          - Aktueller NVIDIA-Treiber
-          - Ausreichend Speicherplatz und VRAM
+          - Windows 10 or Windows 11, 64-bit
+          - Compatible NVIDIA GPU
+          - Current NVIDIA driver
+          - Sufficient VRAM and disk space
 
-          ## Installation prüfen
+          A separate full CUDA Toolkit installation is normally not required.
+          The required CUDA runtime libraries are included in the PyTorch
+          CUDA packages. A compatible NVIDIA driver is still required.
 
-          check-installation.bat ausführen.
+          ## Start the UI
 
-          Auf einem Rechner mit unterstützter NVIDIA-GPU sollte dort stehen:
+          Double-click:
 
-          GPU verfuegbar: True
+          start-ui.bat
 
-          ## Training starten
+          Then open:
 
-          run-training.bat pfad\zur\config.yml
+          http://localhost:3000
 
-          Modellgewichte und Trainingsdaten sind nicht im ZIP enthalten.
+          Keep the command window open while using the UI.
+
+          ## Update the database and start
+
+          If Prisma reports a database error, run:
+
+          update-database-and-start-ui.bat
+
+          ## Check installation
+
+          Double-click:
+
+          check-installation.bat
+
+          ## Start CLI training
+
+          Example:
+
+          run-training.bat config\my-training-config.yml
+
+          Model files and datasets are not included.
           '@ | Set-Content `
             -Path "$env:PACKAGE_NAME\README.md" `
             -Encoding utf8
 
-      - name: Remove caches
+      - name: Remove temporary caches
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -360,24 +679,53 @@ jobs:
             -Directory `
             -Recurse `
             -Force |
-          Where-Object {
-            $_.Name -in @("__pycache__", ".pytest_cache", ".mypy_cache")
-          } |
-          Remove-Item `
-            -Recurse `
-            -Force `
-            -ErrorAction SilentlyContinue
+            Where-Object {
+              $_.Name -in @(
+                "__pycache__",
+                ".pytest_cache",
+                ".mypy_cache",
+                ".next"
+              )
+            } |
+            Remove-Item `
+              -Recurse `
+              -Force `
+              -ErrorAction SilentlyContinue
 
           Get-ChildItem `
             -Path "$env:PACKAGE_NAME" `
             -File `
             -Recurse `
             -Include "*.pyc", "*.pyo" |
-          Remove-Item `
-            -Force `
-            -ErrorAction SilentlyContinue
+            Remove-Item `
+              -Force `
+              -ErrorAction SilentlyContinue
 
-      - name: Create ZIP
+      - name: Verify packaged files
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $requiredFiles = @(
+            "$env:PACKAGE_NAME\python\python.exe",
+            "$env:PACKAGE_NAME\node\node.exe",
+            "$env:PACKAGE_NAME\node\npm.cmd",
+            "$env:PACKAGE_NAME\ai-toolkit\run.py",
+            "$env:PACKAGE_NAME\ai-toolkit\ui\package.json",
+            "$env:PACKAGE_NAME\ai-toolkit\ui\node_modules",
+            "$env:PACKAGE_NAME\start-ui.bat",
+            "$env:PACKAGE_NAME\run-training.bat"
+          )
+
+          foreach ($path in $requiredFiles) {
+            if (-not (Test-Path $path)) {
+              throw "Required packaged file is missing: $path"
+            }
+
+            Write-Host "Found: $path"
+          }
+
+      - name: Create ZIP archive
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -393,18 +741,22 @@ jobs:
             -DestinationPath $zipPath `
             -CompressionLevel Optimal
 
-          Get-Item $zipPath |
-          Select-Object Name, Length
+          $zip = Get-Item $zipPath
+          $sizeGiB = $zip.Length / 1GB
+
+          Write-Host "ZIP file: $($zip.FullName)"
+          Write-Host ("ZIP size: {0:N2} GiB" -f $sizeGiB)
 
           Get-FileHash `
             -Path $zipPath `
-            -Algorithm SHA256
+            -Algorithm SHA256 |
+            Format-List
 
       - name: Upload ZIP artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ai-toolkit-windows-python310-cu128
-          path: ai-toolkit-windows-python310.zip
+          name: ai-toolkit-windows-python310-cu128-ui
+          path: ai-toolkit-windows-python310-cu128.zip
           if-no-files-found: error
           retention-days: 14
           compression-level: 0
