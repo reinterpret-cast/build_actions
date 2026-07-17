@@ -1,25 +1,144 @@
-      - name: Install CUDA-enabled PyTorch
+name: Build AI Toolkit for Windows
+
+on:
+  workflow_dispatch:
+    inputs:
+      ai_toolkit_ref:
+        description: Branch, Tag oder Commit von ostris/ai-toolkit
+        required: true
+        default: main
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build Windows CUDA package
+    runs-on: windows-latest
+    timeout-minutes: 180
+
+    env:
+      PYTHON_VERSION: "3.10.11"
+      PACKAGE_NAME: "ai-toolkit-windows-python310"
+      PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
+      TORCH_VERSION: "2.9.1"
+      TORCHVISION_VERSION: "0.24.1"
+      TORCHAUDIO_VERSION: "2.9.1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Clone AI Toolkit
         shell: pwsh
-        env:
-          PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
-          TORCH_VERSION: "2.9.1"
-          TORCHVISION_VERSION: "0.24.1"
-          TORCHAUDIO_VERSION: "2.9.1"
-          EXPECTED_CUDA_VERSION: "12.8"
-          EXPECTED_CUDA_TAG: "cu128"
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          git clone `
+            --branch "${{ inputs.ai_toolkit_ref }}" `
+            --depth 1 `
+            --recurse-submodules `
+            https://github.com/ostris/ai-toolkit.git `
+            ai-toolkit
+
+          Set-Location ai-toolkit
+          git submodule update --init --recursive
+          git rev-parse HEAD | Out-File -Encoding ascii AI_TOOLKIT_COMMIT.txt
+
+      - name: Create package directories
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          New-Item `
+            -ItemType Directory `
+            -Force `
+            -Path "$env:PACKAGE_NAME\python" |
+          Out-Null
+
+      - name: Download embedded Python
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $archive = "python-$env:PYTHON_VERSION-embed-amd64.zip"
+          $url = "https://www.python.org/ftp/python/$env:PYTHON_VERSION/$archive"
+
+          Invoke-WebRequest -Uri $url -OutFile $archive
+
+          Expand-Archive `
+            -Path $archive `
+            -DestinationPath "$env:PACKAGE_NAME\python" `
+            -Force
+
+          Remove-Item $archive -Force
+
+      - name: Enable Python site-packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $pthFile = Get-ChildItem `
+            "$env:PACKAGE_NAME\python\python*._pth" |
+          Select-Object -First 1
+
+          if (-not $pthFile) {
+            throw "Die Python ._pth-Datei wurde nicht gefunden."
+          }
+
+          $content = Get-Content $pthFile.FullName
+
+          $content = $content | ForEach-Object {
+            if ($_ -eq "#import site") {
+              "import site"
+            }
+            else {
+              $_
+            }
+          }
+
+          Set-Content `
+            -Path $pthFile.FullName `
+            -Value $content `
+            -Encoding ascii
+
+      - name: Install pip
+        shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
           $python = "$env:PACKAGE_NAME\python\python.exe"
 
-          # Eventuell vorhandene CPU- oder inkompatible Wheels entfernen.
-          & $python -m pip uninstall `
-            --yes `
-            torch `
-            torchvision `
-            torchaudio
+          Invoke-WebRequest `
+            -Uri "https://bootstrap.pypa.io/get-pip.py" `
+            -OutFile "get-pip.py"
 
-          # Ausschließlich den offiziellen CUDA-12.8-PyTorch-Index verwenden.
+          & $python get-pip.py --no-warn-script-location
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pip konnte nicht installiert werden."
+          }
+
+          Remove-Item get-pip.py -Force
+
+          & $python -m pip install `
+            --upgrade `
+            pip `
+            setuptools `
+            wheel
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "pip, setuptools oder wheel konnten nicht aktualisiert werden."
+          }
+
+      - name: Install CUDA PyTorch
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $python = "$env:PACKAGE_NAME\python\python.exe"
+
           & $python -m pip install `
             --no-cache-dir `
             --index-url "$env:PYTORCH_INDEX_URL" `
@@ -28,69 +147,7 @@
             "torchaudio==$env:TORCHAUDIO_VERSION"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Installation der CUDA-Version von PyTorch ist fehlgeschlagen."
-          }
-
-      - name: Verify CUDA PyTorch packages
-        shell: pwsh
-        env:
-          EXPECTED_CUDA_VERSION: "12.8"
-          EXPECTED_CUDA_TAG: "cu128"
-        run: |
-          $ErrorActionPreference = "Stop"
-
-          $python = "$env:PACKAGE_NAME\python\python.exe"
-
-          & $python -c @"
-          import sys
-          import torch
-          import torchvision
-          import torchaudio
-
-          expected_cuda = "$env:EXPECTED_CUDA_VERSION"
-          expected_tag = "$env:EXPECTED_CUDA_TAG"
-
-          packages = {
-              "torch": torch.__version__,
-              "torchvision": torchvision.__version__,
-              "torchaudio": torchaudio.__version__,
-          }
-
-          print("Python:", sys.version)
-          print("PyTorch packages:", packages)
-          print("PyTorch CUDA runtime:", torch.version.cuda)
-
-          errors = []
-
-          if torch.version.cuda is None:
-              errors.append(
-                  "PyTorch ist eine CPU-Version: torch.version.cuda ist None."
-              )
-
-          if torch.version.cuda != expected_cuda:
-              errors.append(
-                  f"CUDA-Version ist {torch.version.cuda!r}, "
-                  f"erwartet wurde {expected_cuda!r}."
-              )
-
-          for package, version in packages.items():
-              if f"+{expected_tag}" not in version:
-                  errors.append(
-                      f"{package} {version!r} besitzt nicht den "
-                      f"erwarteten CUDA-Tag +{expected_tag}."
-                  )
-
-          if errors:
-              print("\nCUDA-Prüfung fehlgeschlagen:", file=sys.stderr)
-              for error in errors:
-                  print(f" - {error}", file=sys.stderr)
-              raise SystemExit(1)
-
-          print("CUDA-PyTorch-Prüfung erfolgreich.")
-          "@
-
-          if ($LASTEXITCODE -ne 0) {
-            throw "Es wurden keine gültigen CUDA-12.8-PyTorch-Wheels installiert."
+            throw "CUDA-PyTorch konnte nicht installiert werden."
           }
 
       - name: Install AI Toolkit dependencies
@@ -102,39 +159,28 @@
 
           & $python -m pip install `
             --no-cache-dir `
-            poetry-core `
-            wheel
-
-          & $python -m pip install `
-            --no-cache-dir `
             -r "ai-toolkit\requirements.txt"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Installation der AI-Toolkit-Abhängigkeiten ist fehlgeschlagen."
+            throw "Die AI-Toolkit-Abhängigkeiten konnten nicht installiert werden."
           }
 
           & $python -m pip install `
             --no-cache-dir `
+            poetry-core `
             "triton-windows<3.6"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Installation von triton-windows ist fehlgeschlagen."
+            throw "Die zusätzlichen Windows-Abhängigkeiten konnten nicht installiert werden."
           }
 
-      - name: Restore and lock CUDA PyTorch packages
+      - name: Restore CUDA PyTorch versions
         shell: pwsh
-        env:
-          PYTORCH_INDEX_URL: "https://download.pytorch.org/whl/cu128"
-          TORCH_VERSION: "2.9.1"
-          TORCHVISION_VERSION: "0.24.1"
-          TORCHAUDIO_VERSION: "2.9.1"
         run: |
           $ErrorActionPreference = "Stop"
 
           $python = "$env:PACKAGE_NAME\python\python.exe"
 
-          # requirements.txt könnte theoretisch andere Torch-Wheels installieren.
-          # Deshalb werden am Ende nochmals ausdrücklich die CUDA-Wheels gesetzt.
           & $python -m pip install `
             --no-cache-dir `
             --force-reinstall `
@@ -145,14 +191,11 @@
             "torchaudio==$env:TORCHAUDIO_VERSION"
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Wiederherstellung der CUDA-PyTorch-Wheels ist fehlgeschlagen."
+            throw "Die CUDA-PyTorch-Versionen konnten nicht wiederhergestellt werden."
           }
 
-      - name: Final CUDA package verification
+      - name: Verify CUDA packages
         shell: pwsh
-        env:
-          EXPECTED_CUDA_VERSION: "12.8"
-          EXPECTED_CUDA_TAG: "cu128"
         run: |
           $ErrorActionPreference = "Stop"
 
@@ -160,13 +203,9 @@
 
           & $python -c @"
           import sys
-          import importlib.metadata
           import torch
           import torchvision
           import torchaudio
-
-          expected_cuda = "$env:EXPECTED_CUDA_VERSION"
-          expected_tag = "$env:EXPECTED_CUDA_TAG"
 
           versions = {
               "torch": torch.__version__,
@@ -174,42 +213,198 @@
               "torchaudio": torchaudio.__version__,
           }
 
-          print("Installed package versions:")
-          for package, version in versions.items():
-              print(f"  {package}: {version}")
+          print("Python:", sys.version)
+          print("CUDA runtime:", torch.version.cuda)
 
-          print("Compiled CUDA runtime:", torch.version.cuda)
-          print("CUDA device available on build runner:", torch.cuda.is_available())
+          for name, version in versions.items():
+              print(f"{name}: {version}")
 
           errors = []
 
-          if torch.version.cuda != expected_cuda:
+          if torch.version.cuda != "12.8":
               errors.append(
-                  f"torch.version.cuda={torch.version.cuda!r}; "
-                  f"erwartet={expected_cuda!r}"
+                  f"Falsche CUDA-Runtime: {torch.version.cuda!r}; erwartet: '12.8'"
               )
 
-          for package, version in versions.items():
-              if f"+{expected_tag}" not in version:
+          for name, version in versions.items():
+              if "+cu128" not in version:
                   errors.append(
-                      f"{package} ist kein +{expected_tag}-Build: {version}"
+                      f"{name} ist kein CUDA-12.8-Paket: {version}"
                   )
 
           if errors:
-              print("\nUngültige PyTorch-Installation:", file=sys.stderr)
               for error in errors:
-                  print(f" - {error}", file=sys.stderr)
+                  print(error, file=sys.stderr)
+
               raise SystemExit(1)
 
-          print("\nCUDA-PyTorch ist korrekt installiert.")
+          print("CUDA-12.8-PyTorch wurde erfolgreich geprüft.")
           "@
 
           if ($LASTEXITCODE -ne 0) {
-            throw "Finale CUDA-Prüfung fehlgeschlagen."
+            throw "Die CUDA-Paketprüfung ist fehlgeschlagen."
           }
 
           & $python -m pip check
 
           if ($LASTEXITCODE -ne 0) {
-            throw "pip check meldet inkompatible Abhängigkeiten."
+            throw "pip check hat inkompatible Abhängigkeiten gefunden."
           }
+
+      - name: Copy AI Toolkit
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Copy-Item `
+            -Path "ai-toolkit" `
+            -Destination "$env:PACKAGE_NAME\ai-toolkit" `
+            -Recurse `
+            -Force
+
+          Remove-Item `
+            "$env:PACKAGE_NAME\ai-toolkit\.git" `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+      - name: Create launcher scripts
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          @'
+          @echo off
+          setlocal
+          cd /d "%~dp0ai-toolkit"
+
+          if "%~1"=="" (
+              echo Verwendung:
+              echo run-training.bat pfad\zur\config.yml
+              exit /b 1
+          )
+
+          "..\python\python.exe" run.py %*
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\run-training.bat" `
+            -Encoding ascii
+
+          @'
+          @echo off
+          setlocal
+          cd /d "%~dp0ai-toolkit"
+
+          "..\python\python.exe" -c "import torch; print('PyTorch:', torch.__version__); print('CUDA runtime:', torch.version.cuda); print('GPU verfuegbar:', torch.cuda.is_available())"
+
+          pause
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\check-installation.bat" `
+            -Encoding ascii
+
+          @'
+          @echo off
+          setlocal
+          "%~dp0python\python.exe" %*
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\python.bat" `
+            -Encoding ascii
+
+      - name: Create README
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          @'
+          # AI Toolkit für Windows
+
+          Dieses Paket enthält:
+
+          - AI Toolkit von ostris
+          - Embedded Python 3.10
+          - CUDA-fähiges PyTorch für CUDA 12.8
+          - TorchVision und TorchAudio für CUDA 12.8
+          - Python-Abhängigkeiten des AI Toolkits
+          - triton-windows
+
+          ## Voraussetzungen
+
+          - Windows 10 oder Windows 11, 64 Bit
+          - Kompatible NVIDIA-GPU
+          - Aktueller NVIDIA-Treiber
+          - Ausreichend Speicherplatz und VRAM
+
+          ## Installation prüfen
+
+          check-installation.bat ausführen.
+
+          Auf einem Rechner mit unterstützter NVIDIA-GPU sollte dort stehen:
+
+          GPU verfuegbar: True
+
+          ## Training starten
+
+          run-training.bat pfad\zur\config.yml
+
+          Modellgewichte und Trainingsdaten sind nicht im ZIP enthalten.
+          '@ | Set-Content `
+            -Path "$env:PACKAGE_NAME\README.md" `
+            -Encoding utf8
+
+      - name: Remove caches
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          Get-ChildItem `
+            -Path "$env:PACKAGE_NAME" `
+            -Directory `
+            -Recurse `
+            -Force |
+          Where-Object {
+            $_.Name -in @("__pycache__", ".pytest_cache", ".mypy_cache")
+          } |
+          Remove-Item `
+            -Recurse `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+          Get-ChildItem `
+            -Path "$env:PACKAGE_NAME" `
+            -File `
+            -Recurse `
+            -Include "*.pyc", "*.pyo" |
+          Remove-Item `
+            -Force `
+            -ErrorAction SilentlyContinue
+
+      - name: Create ZIP
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $zipPath = "$env:PACKAGE_NAME.zip"
+
+          if (Test-Path $zipPath) {
+            Remove-Item $zipPath -Force
+          }
+
+          Compress-Archive `
+            -Path "$env:PACKAGE_NAME\*" `
+            -DestinationPath $zipPath `
+            -CompressionLevel Optimal
+
+          Get-Item $zipPath |
+          Select-Object Name, Length
+
+          Get-FileHash `
+            -Path $zipPath `
+            -Algorithm SHA256
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ai-toolkit-windows-python310-cu128
+          path: ai-toolkit-windows-python310.zip
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
